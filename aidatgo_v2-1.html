@@ -1,0 +1,448 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>AidatGo — Apartman Yönetim Sistemi</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent;}
+body{font-family:'DM Sans',system-ui,sans-serif;background:#f0f4f8;min-height:100vh;padding-bottom:80px;}
+#root{max-width:480px;margin:0 auto;}
+input,textarea,select{-webkit-appearance:none;appearance:none;}
+@keyframes fadeIn{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:translateY(0)}}
+@keyframes slideUp{from{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script>
+const {useState,useEffect,useRef,createElement:h} = React;
+
+// ── CONSTANTS ──────────────────────────────────────────────────
+const G="#25D366",DG="#128C7E",BG="#f0f4f8",SF="#ffffff",BD="#e2e8f0",MT="#94a3b8",DK="#1e293b",RD="#ef4444",YL="#f59e0b",BL="#3b82f6";
+const MONTHS=["Ocak","Şubat","Mart","Nisan","Mayıs","Haziran","Temmuz","Ağustos","Eylül","Ekim","Kasım","Aralık"];
+const now=new Date();
+const CUR_MONTH=`${MONTHS[now.getMonth()]} ${now.getFullYear()}`;
+
+const DEFAULT_TPL=`Sayın {AD},
+
+🏢 {APARTMAN} — {DÖNEM} dönemi aidat bilgilendirmesi
+
+💰 Aidat tutarınız: *{TUTAR} ₺*
+
+Aidatınızı en geç ay sonuna kadar ödemenizi rica ederiz.
+
+Saygılarımızla 🙏
+Apartman Yönetimi`;
+
+const REMINDER_TPL=`Sayın {AD},
+
+⚠️ {APARTMAN} — {DÖNEM} dönemi aidat hatırlatması
+
+💰 Ödenmemiş tutarınız: *{TUTAR} ₺*
+
+Lütfen en kısa sürede ödemenizi yapınız.
+
+Teşekkürler,
+Apartman Yönetimi`;
+
+const CATS=["Genel","Temizlik","Asansör","Elektrik","Su","Doğalgaz","Bakım-Onarım","Sigorta","Diğer"];
+
+// ── HELPERS ────────────────────────────────────────────────────
+function fmtPhone(p){p=p.replace(/\D/g,"");if(p.startsWith("0"))p="90"+p.slice(1);if(!p.startsWith("90"))p="90"+p;return p;}
+function buildMsg(r,tpl,apt,per,fee){return tpl.replace(/{AD}/g,r.name).replace(/{APARTMAN}/g,apt||"Apartman").replace(/{DÖNEM}/g,per||"Bu Dönem").replace(/{TUTAR}/g,r.debt||fee||"—").replace(/{DAİRE}/g,r.apt||"—");}
+function uid(){return Date.now()+Math.random();}
+function fmtNum(n){return Number(n).toLocaleString("tr-TR");}
+
+function useLS(key,init){
+  const[val,setVal]=useState(()=>{try{const s=localStorage.getItem(key);return s?JSON.parse(s):init;}catch{return init;}});
+  useEffect(()=>{try{localStorage.setItem(key,JSON.stringify(val));}catch{};},[key,val]);
+  return[val,setVal];
+}
+
+// ── UI ATOMS ───────────────────────────────────────────────────
+function Toast({msg,show}){
+  return h("div",{style:{position:"fixed",bottom:24,left:"50%",transform:`translateX(-50%) translateY(${show?0:80}px)`,background:G,color:"#000",padding:"12px 22px",borderRadius:12,fontWeight:700,fontSize:13,zIndex:9999,transition:"transform 0.3s ease",whiteSpace:"nowrap",boxShadow:`0 4px 20px rgba(37,211,102,0.5)`}},msg);
+}
+
+function Avatar({name,size=38}){
+  return h("div",{style:{width:size,height:size,borderRadius:"50%",background:`linear-gradient(135deg,${DG},${G})`,display:"flex",alignItems:"center",justifyContent:"center",color:"#fff",fontWeight:700,fontSize:size*0.38,flexShrink:0}},(name||"?")[0].toUpperCase());
+}
+
+function Card({children,style={}}){
+  return h("div",{style:{background:SF,borderRadius:14,padding:18,marginBottom:14,border:`1px solid ${BD}`,boxShadow:"0 2px 8px rgba(0,0,0,0.04)",...style}},children);
+}
+
+function CardTitle({icon,label}){
+  return h("div",{style:{fontSize:11,fontWeight:700,color:G,textTransform:"uppercase",letterSpacing:1,marginBottom:14}},`${icon} ${label}`);
+}
+
+function Label({children}){
+  return h("label",{style:{display:"block",fontSize:12,fontWeight:600,color:MT,marginBottom:5,textTransform:"uppercase",letterSpacing:0.5}},children);
+}
+
+function Inp({label:lbl,...props}){
+  const[focused,setFocused]=useState(false);
+  const base={width:"100%",padding:"11px 13px",background:BG,border:`1.5px solid ${focused?G:BD}`,borderRadius:10,fontSize:15,color:DK,fontFamily:"inherit",outline:"none",boxSizing:"border-box",boxShadow:focused?`0 0 0 3px rgba(37,211,102,0.12)`:"none",transition:"all 0.2s"};
+  return h("div",null,lbl&&h(Label,null,lbl),h("input",{style:base,onFocus:()=>setFocused(true),onBlur:()=>setFocused(false),...props}));
+}
+
+function TA({label:lbl,value,onChange,placeholder,rows=6}){
+  const[focused,setFocused]=useState(false);
+  return h("div",null,
+    lbl&&h(Label,null,lbl),
+    h("textarea",{value,onChange,placeholder,rows,onFocus:()=>setFocused(true),onBlur:()=>setFocused(false),style:{width:"100%",padding:"11px 13px",background:BG,border:`1.5px solid ${focused?G:BD}`,borderRadius:10,fontSize:14,color:DK,fontFamily:"inherit",outline:"none",resize:"vertical",lineHeight:1.6,boxSizing:"border-box",boxShadow:focused?`0 0 0 3px rgba(37,211,102,0.12)`:"none",transition:"all 0.2s"}})
+  );
+}
+
+function Sel({label:lbl,value,onChange,children}){
+  return h("div",null,
+    lbl&&h(Label,null,lbl),
+    h("select",{value,onChange,style:{width:"100%",padding:"11px 13px",background:BG,border:`1.5px solid ${BD}`,borderRadius:10,fontSize:14,color:DK,fontFamily:"inherit",outline:"none",boxSizing:"border-box"}},children)
+  );
+}
+
+function Btn({children,variant="green",onClick,style={},disabled=false,fullWidth=false}){
+  const[hov,setHov]=useState(false);
+  const variants={
+    green:{background:hov?"#1ebb58":G,color:"#000",padding:"11px 18px",fontSize:14,border:"none"},
+    outline:{background:hov?"#f8fafc":SF,color:DK,border:`1.5px solid ${BD}`,padding:"11px 16px",fontSize:13},
+    red:{background:"none",border:"none",color:RD,padding:"4px 8px",fontSize:20,lineHeight:"1"},
+    blue:{background:hov?"#2563eb":BL,color:"#fff",padding:"11px 18px",fontSize:14,border:"none"},
+    ghost:{background:hov?"#f0fdf4":"transparent",color:"#16a34a",border:`1px solid #bbf7d0`,padding:"6px 12px",fontSize:12,borderRadius:8},
+  };
+  return h("button",{onClick,disabled,onMouseEnter:()=>setHov(true),onMouseLeave:()=>setHov(false),style:{...{borderRadius:10,fontFamily:"inherit",fontWeight:700,cursor:disabled?"not-allowed":"pointer",display:"inline-flex",alignItems:"center",gap:6,transition:"all 0.15s",opacity:disabled?0.5:1,width:fullWidth?"100%":"auto",justifyContent:fullWidth?"center":"flex-start"},...variants[variant],...style}},children);
+}
+
+function EmptyState({icon,text}){
+  return h("div",{style:{textAlign:"center",padding:"36px 20px",color:MT,background:SF,borderRadius:14,border:`1px dashed ${BD}`}},h("div",{style:{fontSize:34,marginBottom:8}},icon),h("div",{style:{fontSize:14}},text));
+}
+
+function PillFilter({options,value,onChange}){
+  return h("div",{style:{display:"flex",gap:6,marginBottom:12,flexWrap:"wrap"}},
+    options.map(([k,l])=>h("button",{key:k,onClick:()=>onChange(k),style:{padding:"7px 14px",fontSize:12,fontWeight:600,borderRadius:20,border:`1.5px solid ${value===k?G:BD}`,background:value===k?"#f0fdf4":SF,color:value===k?"#16a34a":MT,cursor:"pointer",fontFamily:"inherit"}},l))
+  );
+}
+
+// ── APP ────────────────────────────────────────────────────────
+function App(){
+  const[tab,setTab]=useState("panel");
+  const[toast,setToast]=useState({show:false,msg:""});
+  const[aptName,setAptName]=useLS("ag-aptname","");
+  const[period,setPeriod]=useLS("ag-period",CUR_MONTH);
+  const[defFee,setDefFee]=useLS("ag-deffee","");
+  const[residents,setResidents]=useLS("ag-residents",[]);
+  const[payments,setPayments]=useLS("ag-payments",{});
+  const[expenses,setExpenses]=useLS("ag-expenses",[]);
+  const[announcements,setAnnouncements]=useLS("ag-announce",[]);
+  const[aidatTpl,setAidatTpl]=useLS("ag-tpl",DEFAULT_TPL);
+  const[reminderTpl,setReminderTpl]=useLS("ag-rtpl",REMINDER_TPL);
+
+  function showToast(msg){setToast({show:true,msg});setTimeout(()=>setToast(t=>({...t,show:false})),2500);}
+  function payKey(id){return`${id}_${period}`;}
+  function isPaid(id){return!!payments[payKey(id)];}
+  function togglePaid(id){
+    const r=residents.find(x=>x.id===id);
+    const wasP=isPaid(id);
+    setPayments(p=>({...p,[payKey(id)]:!p[payKey(id)]}));
+    showToast(wasP?`↩ ${r?.name} — ödenmedi işaretlendi`:`✓ ${r?.name} — ödendi!`);
+  }
+
+  const paidCount=residents.filter(r=>isPaid(r.id)).length;
+  const unpaidCount=residents.length-paidCount;
+  const totalExpected=residents.reduce((s,r)=>s+(parseFloat(r.debt)||parseFloat(defFee)||0),0);
+  const totalCollected=residents.filter(r=>isPaid(r.id)).reduce((s,r)=>s+(parseFloat(r.debt)||parseFloat(defFee)||0),0);
+  const totalExpenses=expenses.reduce((s,e)=>s+parseFloat(e.amount||0),0);
+  const cashBalance=totalCollected-totalExpenses;
+
+  const TABS=[{id:"panel",icon:"🏠",label:"Panel"},{id:"sakinler",icon:"👥",label:"Sakinler"},{id:"mesaj",icon:"💬",label:"Mesaj"},{id:"gider",icon:"💰",label:"Gider"},{id:"duyuru",icon:"📢",label:"Duyuru"}];
+
+  const shared={residents,setResidents,aptName,setAptName,period,setPeriod,defFee,setDefFee,payments,setPayments,expenses,setExpenses,announcements,setAnnouncements,aidatTpl,setAidatTpl,reminderTpl,setReminderTpl,isPaid,togglePaid,paidCount,unpaidCount,totalExpected,totalCollected,totalExpenses,cashBalance,showToast};
+
+  return h("div",null,
+    // Header
+    h("div",{style:{background:`linear-gradient(135deg,${DG} 0%,${G} 100%)`,padding:"24px 20px 20px",color:"#fff"}},
+      h("div",{style:{display:"flex",alignItems:"center",gap:12,marginBottom:16}},
+        h("div",{style:{width:44,height:44,background:"rgba(255,255,255,0.2)",borderRadius:14,display:"flex",alignItems:"center",justifyContent:"center",fontSize:22}},"🏢"),
+        h("div",null,h("div",{style:{fontSize:22,fontWeight:800,letterSpacing:-0.5}},"AidatGo"),h("div",{style:{fontSize:12,opacity:0.8}},aptName||"Apartman Yönetim Sistemi"))
+      ),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr 1fr",gap:8}},
+        [{n:residents.length,l:"Sakin"},{n:`${paidCount}/${residents.length}`,l:"Ödedi"},{n:totalCollected>0?fmtNum(totalCollected)+"₺":"0₺",l:"Tahsilat"},{n:(cashBalance>=0?"+":"")+fmtNum(cashBalance)+"₺",l:"Kasa",c:cashBalance<0?"#fca5a5":null}]
+        .map((s,i)=>h("div",{key:i,style:{background:"rgba(255,255,255,0.15)",borderRadius:12,padding:"10px 6px",textAlign:"center",backdropFilter:"blur(10px)"}},
+          h("div",{style:{fontSize:15,fontWeight:800,color:s.c||"#fff"}},s.n),
+          h("div",{style:{fontSize:10,opacity:0.8,marginTop:2}},s.l)
+        ))
+      )
+    ),
+    // Content
+    h("div",{style:{padding:"16px 16px 0"}},
+      tab==="panel"&&h(PanelTab,shared),
+      tab==="sakinler"&&h(SakinlerTab,shared),
+      tab==="mesaj"&&h(MesajTab,shared),
+      tab==="gider"&&h(GiderTab,shared),
+      tab==="duyuru"&&h(DuyuruTab,shared),
+    ),
+    // Bottom Nav
+    h("div",{style:{position:"fixed",bottom:0,left:"50%",transform:"translateX(-50%)",width:"100%",maxWidth:480,background:SF,borderTop:`1px solid ${BD}`,padding:"6px 8px 10px",display:"flex",gap:4,zIndex:100,boxShadow:"0 -4px 20px rgba(0,0,0,0.08)"}},
+      TABS.map(t=>h("button",{key:t.id,onClick:()=>setTab(t.id),style:{flex:1,padding:"10px 2px",fontSize:10,fontWeight:600,border:"none",background:tab===t.id?G:"transparent",color:tab===t.id?"#000":MT,borderRadius:8,cursor:"pointer",fontFamily:"inherit",display:"flex",flexDirection:"column",alignItems:"center",gap:2,transition:"all 0.2s"}},
+        h("span",{style:{fontSize:18}},t.icon),h("span",null,t.label)
+      ))
+    ),
+    h(Toast,{msg:toast.msg,show:toast.show})
+  );
+}
+
+// ── PANEL ──────────────────────────────────────────────────────
+function PanelTab({residents,isPaid,togglePaid,period,aptName,defFee,paidCount,unpaidCount,totalExpected,totalCollected,totalExpenses,cashBalance,expenses,announcements,reminderTpl,showToast}){
+  const unpaid=residents.filter(r=>!isPaid(r.id));
+  const pct=totalExpected>0?(totalCollected/totalExpected)*100:0;
+  return h("div",null,
+    h("div",{style:{textAlign:"center",marginBottom:14}},
+      h("span",{style:{background:SF,border:`1px solid ${BD}`,borderRadius:20,padding:"6px 16px",fontSize:13,fontWeight:600,color:DK}},`📅 ${period||"Dönem belirtilmedi"}`)
+    ),
+    h(Card,null,
+      h(CardTitle,{icon:"📊",label:"Tahsilat Durumu"}),
+      h("div",{style:{display:"flex",justifyContent:"space-between",marginBottom:8,fontSize:13}},h("span",{style:{color:MT}},"Tahsilat"),h("span",{style:{fontWeight:700}},`${fmtNum(totalCollected)}₺ / ${fmtNum(totalExpected)}₺`)),
+      h("div",{style:{background:BG,borderRadius:99,height:10,overflow:"hidden",marginBottom:14}},h("div",{style:{width:`${pct}%`,background:`linear-gradient(90deg,${DG},${G})`,height:"100%",borderRadius:99,transition:"width 0.5s ease"}})),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8}},
+        [{n:paidCount,l:"Ödedi",bg:"#f0fdf4",c:"#16a34a"},{n:unpaidCount,l:"Ödemedi",bg:"#fff5f5",c:RD},{n:(cashBalance>=0?"+":"")+fmtNum(cashBalance)+"₺",l:"Kasa",bg:cashBalance>=0?"#f0fdf4":"#fff5f5",c:cashBalance>=0?"#16a34a":RD}]
+        .map((s,i)=>h("div",{key:i,style:{background:s.bg,borderRadius:10,padding:"10px 8px",textAlign:"center"}},h("div",{style:{fontSize:i===2?14:20,fontWeight:800,color:s.c}},s.n),h("div",{style:{fontSize:11,color:MT,marginTop:2}},s.l)))
+      )
+    ),
+    unpaid.length>0&&h(Card,null,
+      h(CardTitle,{icon:"⚠️",label:`Bekleyen Ödemeler (${unpaid.length})`}),
+      unpaid.map(r=>{
+        const msg=encodeURIComponent(buildMsg(r,reminderTpl,aptName,period,defFee));
+        return h("div",{key:r.id,style:{display:"flex",alignItems:"center",gap:10,padding:"10px 0",borderBottom:`1px solid ${BD}`}},
+          h(Avatar,{name:r.name,size:34}),
+          h("div",{style:{flex:1,minWidth:0}},h("div",{style:{fontWeight:600,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},r.name),h("div",{style:{fontSize:11,color:MT}},`${r.apt||"—"} · ${r.debt||defFee||"—"}₺`)),
+          h("a",{href:`https://wa.me/${fmtPhone(r.phone)}?text=${msg}`,target:"_blank",rel:"noreferrer",style:{background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:8,padding:"6px 9px",fontSize:11,fontWeight:700,color:"#16a34a",textDecoration:"none",whiteSpace:"nowrap"}},"⚠️ Hatırlat"),
+          h("button",{onClick:()=>togglePaid(r.id),style:{background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:8,padding:"6px 9px",fontSize:11,fontWeight:700,color:"#16a34a",cursor:"pointer",fontFamily:"inherit",whiteSpace:"nowrap"}},"✓ Ödendi")
+        );
+      })
+    ),
+    announcements.length>0&&h(Card,null,
+      h(CardTitle,{icon:"📢",label:"Son Duyurular"}),
+      [...announcements].reverse().slice(0,2).map(a=>h("div",{key:a.id,style:{background:BG,borderRadius:10,padding:"10px 12px",marginBottom:8}},h("div",{style:{fontWeight:600,fontSize:13,marginBottom:2}},a.title),h("div",{style:{color:MT,fontSize:11}},a.date)))
+    ),
+    expenses.length>0&&h(Card,null,
+      h(CardTitle,{icon:"💸",label:"Son Giderler"}),
+      [...expenses].reverse().slice(0,3).map(e=>h("div",{key:e.id,style:{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${BD}`,fontSize:13}},h("span",null,e.label),h("span",{style:{fontWeight:700,color:RD}},`-${fmtNum(e.amount)}₺`)))
+    )
+  );
+}
+
+// ── SAKİNLER ───────────────────────────────────────────────────
+function SakinlerTab({residents,setResidents,aptName,setAptName,period,setPeriod,defFee,setDefFee,isPaid,togglePaid,showToast}){
+  const[rName,setRName]=useState("");const[rApt,setRApt]=useState("");const[rPhone,setRPhone]=useState("");const[rDebt,setRDebt]=useState("");
+  const[filter,setFilter]=useState("all");
+
+  function add(){
+    if(!rName.trim()||!rPhone.trim()){showToast("⚠️ Ad ve telefon zorunlu");return;}
+    setResidents(r=>[...r,{id:uid(),name:rName.trim(),apt:rApt.trim(),phone:rPhone.trim(),debt:rDebt.trim()}]);
+    setRName("");setRApt("");setRPhone("");setRDebt("");
+    showToast("✓ Sakin eklendi");
+  }
+  function remove(id){
+    if(!confirm("Bu sakini silmek istediğinize emin misiniz?"))return;
+    setResidents(r=>r.filter(x=>x.id!==id));showToast("Sakin silindi");
+  }
+  function loadSample(){
+    setAptName("Güneş Apartmanı");setPeriod("Nisan 2026");setDefFee("650");
+    setResidents([{id:uid(),name:"Ahmet Yılmaz",apt:"Daire 1",phone:"05301234567",debt:""},{id:uid(),name:"Fatma Kaya",apt:"Daire 2",phone:"05421234567",debt:"1300"},{id:uid(),name:"Mehmet Demir",apt:"Daire 3",phone:"05551234567",debt:""},{id:uid(),name:"Ayşe Çelik",apt:"Daire 4",phone:"05361234567",debt:"650"},{id:uid(),name:"Ali Öztürk",apt:"Daire 5",phone:"05321234567",debt:""}]);
+    showToast("✓ Örnek yüklendi");
+  }
+
+  const filtered=residents.filter(r=>filter==="all"?true:filter==="paid"?isPaid(r.id):!isPaid(r.id));
+
+  return h("div",null,
+    h(Card,null,h(CardTitle,{icon:"🏢",label:"Apartman Bilgileri"}),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}},
+        h(Inp,{label:"Apartman Adı",value:aptName,onChange:e=>setAptName(e.target.value),placeholder:"Güneş Apt."}),
+        h(Inp,{label:"Dönem",value:period,onChange:e=>setPeriod(e.target.value),placeholder:"Nisan 2026"})
+      ),
+      h(Inp,{label:"Standart Aidat (₺)",type:"number",value:defFee,onChange:e=>setDefFee(e.target.value),placeholder:"500"})
+    ),
+    h(Card,null,h(CardTitle,{icon:"➕",label:"Sakin Ekle"}),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}},
+        h(Inp,{label:"Ad Soyad",value:rName,onChange:e=>setRName(e.target.value),placeholder:"Ahmet Yılmaz"}),
+        h(Inp,{label:"Daire No",value:rApt,onChange:e=>setRApt(e.target.value),placeholder:"Daire 3"})
+      ),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}},
+        h(Inp,{label:"Telefon",type:"tel",value:rPhone,onChange:e=>setRPhone(e.target.value),placeholder:"05xxxxxxxxx"}),
+        h(Inp,{label:"Borç ₺ (boş=standart)",type:"number",value:rDebt,onChange:e=>setRDebt(e.target.value),placeholder:"—"})
+      ),
+      h("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},h(Btn,{onClick:add},"+ Ekle"),h(Btn,{variant:"outline",onClick:loadSample},"📋 Örnek Yükle"))
+    ),
+    residents.length>0&&h(PillFilter,{options:[["all","Tümü"],["unpaid","⚠️ Ödemedi"],["paid","✓ Ödedi"]],value:filter,onChange:setFilter}),
+    h("div",{style:{fontSize:11,fontWeight:700,color:MT,textTransform:"uppercase",letterSpacing:1,marginBottom:10}},`Sakinler (${filtered.length})`),
+    filtered.length===0?h(EmptyState,{icon:"👤",text:"Sakin bulunamadı"}):
+    filtered.map(r=>h("div",{key:r.id,style:{background:SF,border:`1.5px solid ${isPaid(r.id)?"#bbf7d0":BD}`,borderRadius:12,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12,animation:"fadeIn 0.2s"}},
+      h(Avatar,{name:r.name}),
+      h("div",{style:{flex:1,minWidth:0}},h("div",{style:{fontWeight:600,fontSize:14,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}},r.name),h("div",{style:{fontSize:12,color:MT,marginTop:2}},`${r.apt||"—"} · ${r.phone}`)),
+      h("div",{style:{display:"flex",flexDirection:"column",alignItems:"flex-end",gap:5}},
+        h("span",{style:{fontWeight:700,fontSize:12,color:r.debt?YL:G}},r.debt?r.debt+"₺":"Standart"),
+        h("button",{onClick:()=>togglePaid(r.id),style:{fontSize:11,fontWeight:700,padding:"4px 9px",borderRadius:20,border:"none",cursor:"pointer",fontFamily:"inherit",background:isPaid(r.id)?"#f0fdf4":"#fff5f5",color:isPaid(r.id)?"#16a34a":RD}},isPaid(r.id)?"✓ Ödedi":"✗ Bekliyor")
+      ),
+      h("button",{onClick:()=>remove(r.id),style:{background:"none",border:"none",color:RD,cursor:"pointer",fontSize:20,padding:"2px 4px",lineHeight:1}},"×")
+    ))
+  );
+}
+
+// ── MESAJ ──────────────────────────────────────────────────────
+function MesajTab({residents,aptName,period,defFee,isPaid,aidatTpl,setAidatTpl,reminderTpl,setReminderTpl,showToast}){
+  const[mode,setMode]=useState("aidat");
+  const[prevIdx,setPrevIdx]=useState(0);
+  const taRef=useRef(null);
+  const tpl=mode==="aidat"?aidatTpl:reminderTpl;
+  const setTpl=mode==="aidat"?setAidatTpl:setReminderTpl;
+  const defTpl=mode==="aidat"?DEFAULT_TPL:REMINDER_TPL;
+  const cur=residents[prevIdx];
+  const prevMsg=cur?buildMsg(cur,tpl,aptName,period,defFee):"Mesajınız burada görünecek...";
+  const targets=mode==="aidat"?residents:residents.filter(r=>!isPaid(r.id));
+
+  function insertVar(v){
+    const ta=taRef.current;if(!ta)return;
+    const s=ta.selectionStart,e=ta.selectionEnd;
+    setTpl(tpl.slice(0,s)+v+tpl.slice(e));
+    setTimeout(()=>{ta.selectionStart=ta.selectionEnd=s+v.length;ta.focus();},0);
+  }
+
+  return h("div",null,
+    h("div",{style:{display:"flex",gap:8,marginBottom:14}},
+      [["aidat","💰 Aidat"],["hatirlatma","⚠️ Hatırlatma"]].map(([k,l])=>h("button",{key:k,onClick:()=>setMode(k),style:{flex:1,padding:"10px 8px",fontSize:13,fontWeight:600,borderRadius:10,border:`1.5px solid ${mode===k?G:BD}`,background:mode===k?"#f0fdf4":SF,color:mode===k?"#16a34a":MT,cursor:"pointer",fontFamily:"inherit"}},l))
+    ),
+    h(Card,null,h(CardTitle,{icon:"✉️",label:"Şablon"}),
+      h("textarea",{ref:taRef,value:tpl,onChange:e=>setTpl(e.target.value),rows:7,style:{width:"100%",padding:"11px 13px",background:BG,border:`1.5px solid ${BD}`,borderRadius:10,fontSize:14,color:DK,fontFamily:"inherit",outline:"none",resize:"vertical",lineHeight:1.6,boxSizing:"border-box"}}),
+      h("div",{style:{fontSize:12,color:MT,margin:"8px 0 8px"}},"Değişken ekle:"),
+      h("div",{style:{display:"flex",gap:6,flexWrap:"wrap",marginBottom:6}},
+        ["{AD}","{TUTAR}","{DAİRE}","{DÖNEM}","{APARTMAN}"].map(v=>h("span",{key:v,onClick:()=>insertVar(v),style:{background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:5,padding:"3px 8px",color:"#16a34a",fontSize:11,fontFamily:"monospace",cursor:"pointer"}},v)),
+        h("span",{onClick:()=>setTpl(defTpl),style:{background:"#fff5f5",border:"1px solid #fecaca",borderRadius:5,padding:"3px 8px",color:RD,fontSize:11,cursor:"pointer"}},"↺ Sıfırla")
+      )
+    ),
+    h(Card,null,h(CardTitle,{icon:"👁",label:"Önizleme"}),
+      residents.length>0&&h("div",{style:{marginBottom:12}},
+        h(Label,null,"Sakin Seç"),
+        h("select",{value:prevIdx,onChange:e=>setPrevIdx(Number(e.target.value)),style:{width:"100%",padding:"11px 13px",background:BG,border:`1.5px solid ${BD}`,borderRadius:10,fontSize:14,color:DK,fontFamily:"inherit",outline:"none"}},
+          residents.map((r,i)=>h("option",{key:r.id,value:i},`${r.name} — ${r.apt||r.phone}`))
+        )
+      ),
+      h("div",{style:{background:"#e9fbe5",borderRadius:"0 12px 12px 12px",padding:"14px 16px",fontSize:13,lineHeight:1.7,color:"#1a1a1a",whiteSpace:"pre-wrap",wordBreak:"break-word",border:"1px solid #d4f3cc",position:"relative"}},
+        h("div",{style:{position:"absolute",top:-1,left:-8,width:0,height:0,borderTop:"10px solid #e9fbe5",borderLeft:"10px solid transparent"}}),
+        prevMsg
+      )
+    ),
+    h(Card,null,h(CardTitle,{icon:"📤",label:mode==="aidat"?"Herkese Gönder":`Ödenmeyenlere Gönder (${targets.length})`}),
+      targets.length===0?h(EmptyState,{icon:"🎉",text:mode==="hatirlatma"?"Tüm sakinler ödedi!":"Sakin eklenmedi"}):
+      h("div",null,
+        targets.map(r=>{
+          const msg=encodeURIComponent(buildMsg(r,tpl,aptName,period,defFee));
+          return h("a",{key:r.id,href:`https://wa.me/${fmtPhone(r.phone)}?text=${msg}`,target:"_blank",rel:"noreferrer",style:{display:"flex",alignItems:"center",gap:12,background:BG,border:`1.5px solid ${BD}`,borderRadius:12,padding:"12px 14px",textDecoration:"none",color:DK,marginBottom:8}},
+            h("div",{style:{width:38,height:38,background:G,borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}},"💬"),
+            h("div",{style:{flex:1,minWidth:0}},h("div",{style:{fontWeight:600,fontSize:14}},r.name),h("div",{style:{fontSize:12,color:MT,marginTop:2}},`${r.apt||"—"} · ${r.debt||defFee||"—"}₺`)),
+            h("span",{style:{color:G,fontWeight:700,fontSize:18}},"→")
+          );
+        }),
+        h("button",{onClick:()=>{targets.forEach((r,i)=>setTimeout(()=>window.open(`https://wa.me/${fmtPhone(r.phone)}?text=${encodeURIComponent(buildMsg(r,tpl,aptName,period,defFee))}`,"_blank"),i*1500));showToast("🚀 Mesajlar açılıyor...");},style:{marginTop:8,width:"100%",background:G,color:"#000",border:"none",borderRadius:10,padding:"14px",fontSize:15,fontWeight:700,cursor:"pointer",fontFamily:"inherit"}},`🚀 Hepsini Sırayla Aç (${targets.length} kişi)`)
+      )
+    )
+  );
+}
+
+// ── GİDER ──────────────────────────────────────────────────────
+function GiderTab({expenses,setExpenses,totalCollected,cashBalance,showToast}){
+  const[label,setLabel]=useState("");const[amount,setAmount]=useState("");const[cat,setCat]=useState("Genel");
+  const totalExpenses=expenses.reduce((s,e)=>s+parseFloat(e.amount||0),0);
+
+  function add(){
+    if(!label.trim()||!amount){showToast("⚠️ Açıklama ve tutar zorunlu");return;}
+    setExpenses(e=>[...e,{id:uid(),label:label.trim(),amount,cat,date:new Date().toLocaleDateString("tr-TR")}]);
+    setLabel("");setAmount("");showToast("✓ Gider eklendi");
+  }
+  function remove(id){setExpenses(e=>e.filter(x=>x.id!==id));showToast("Gider silindi");}
+
+  const catTotals=CATS.map(c=>({cat:c,total:expenses.filter(e=>e.cat===c).reduce((s,e)=>s+parseFloat(e.amount||0),0)})).filter(x=>x.total>0);
+
+  return h("div",null,
+    h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:10}},
+      h("div",{style:{background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:12,padding:14,textAlign:"center"}},h("div",{style:{fontSize:18,fontWeight:800,color:"#16a34a"}},fmtNum(totalCollected)+"₺"),h("div",{style:{fontSize:12,color:MT,marginTop:2}},"Tahsilat")),
+      h("div",{style:{background:"#fff5f5",border:"1px solid #fecaca",borderRadius:12,padding:14,textAlign:"center"}},h("div",{style:{fontSize:18,fontWeight:800,color:RD}},fmtNum(totalExpenses)+"₺"),h("div",{style:{fontSize:12,color:MT,marginTop:2}},"Toplam Gider"))
+    ),
+    h("div",{style:{background:cashBalance>=0?"#f0fdf4":"#fff5f5",border:`1px solid ${cashBalance>=0?"#bbf7d0":"#fecaca"}`,borderRadius:12,padding:14,textAlign:"center",marginBottom:14}},
+      h("div",{style:{fontSize:22,fontWeight:800,color:cashBalance>=0?"#16a34a":RD}},(cashBalance>=0?"+":"")+fmtNum(cashBalance)+"₺"),
+      h("div",{style:{fontSize:12,color:MT,marginTop:2}},"Kasa Bakiyesi")
+    ),
+    h(Card,null,h(CardTitle,{icon:"➕",label:"Gider Ekle"}),
+      h("div",{style:{marginBottom:10}},h(Inp,{label:"Açıklama",value:label,onChange:e=>setLabel(e.target.value),placeholder:"Asansör bakımı"})),
+      h("div",{style:{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}},
+        h(Inp,{label:"Tutar (₺)",type:"number",value:amount,onChange:e=>setAmount(e.target.value),placeholder:"1500"}),
+        h("div",null,h(Label,null,"Kategori"),h("select",{value:cat,onChange:e=>setCat(e.target.value),style:{width:"100%",padding:"11px 13px",background:BG,border:`1.5px solid ${BD}`,borderRadius:10,fontSize:14,color:DK,fontFamily:"inherit",outline:"none"}},CATS.map(c=>h("option",{key:c},c))))
+      ),
+      h(Btn,{onClick:add},"+ Gider Ekle")
+    ),
+    catTotals.length>0&&h(Card,null,h(CardTitle,{icon:"📊",label:"Kategoriye Göre"}),
+      catTotals.map(({cat,total})=>h("div",{key:cat,style:{display:"flex",justifyContent:"space-between",padding:"8px 0",borderBottom:`1px solid ${BD}`,fontSize:13}},h("span",null,cat),h("span",{style:{fontWeight:700,color:RD}},fmtNum(total)+"₺")))
+    ),
+    h("div",{style:{fontSize:11,fontWeight:700,color:MT,textTransform:"uppercase",letterSpacing:1,marginBottom:10}},`Gider Listesi (${expenses.length})`),
+    expenses.length===0?h(EmptyState,{icon:"💸",text:"Henüz gider eklenmedi"}):
+    [...expenses].reverse().map(e=>h("div",{key:e.id,style:{background:SF,border:`1px solid ${BD}`,borderRadius:12,padding:"12px 14px",marginBottom:8,display:"flex",alignItems:"center",gap:12}},
+      h("div",{style:{width:36,height:36,background:"#fff5f5",borderRadius:"50%",display:"flex",alignItems:"center",justifyContent:"center",fontSize:16,flexShrink:0}},"💸"),
+      h("div",{style:{flex:1}},h("div",{style:{fontWeight:600,fontSize:14}},e.label),h("div",{style:{fontSize:11,color:MT,marginTop:2}},`${e.cat} · ${e.date}`)),
+      h("div",{style:{fontWeight:700,color:RD,fontSize:14}},"-"+fmtNum(e.amount)+"₺"),
+      h("button",{onClick:()=>remove(e.id),style:{background:"none",border:"none",color:RD,cursor:"pointer",fontSize:18,lineHeight:1}},"×")
+    ))
+  );
+}
+
+// ── DUYURU ─────────────────────────────────────────────────────
+function DuyuruTab({announcements,setAnnouncements,residents,aptName,showToast}){
+  const[title,setTitle]=useState("");const[body,setBody]=useState("");
+
+  function add(){
+    if(!title.trim()){showToast("⚠️ Başlık zorunlu");return;}
+    const a={id:uid(),title:title.trim(),body:body.trim(),date:new Date().toLocaleDateString("tr-TR")};
+    setAnnouncements(x=>[...x,a]);
+    setTitle("");setBody("");
+    showToast("✓ Duyuru eklendi");
+    return a;
+  }
+  function remove(id){setAnnouncements(a=>a.filter(x=>x.id!==id));}
+  function sendAnn(a){
+    if(!residents.length){showToast("⚠️ Sakin listesi boş");return;}
+    const msg=encodeURIComponent(`📢 *${aptName||"Apartman"} Duyurusu*\n\n${a.title}${a.body?"\n\n"+a.body:""}\n\n_${a.date}_`);
+    residents.forEach((r,i)=>setTimeout(()=>window.open(`https://wa.me/${fmtPhone(r.phone)}?text=${msg}`,"_blank"),i*1500));
+    showToast("🚀 Duyuru gönderiliyor...");
+  }
+
+  return h("div",null,
+    h(Card,null,h(CardTitle,{icon:"📢",label:"Yeni Duyuru"}),
+      h("div",{style:{marginBottom:10}},h(Inp,{label:"Başlık",value:title,onChange:e=>setTitle(e.target.value),placeholder:"Yarın su kesilecek"})),
+      h("div",{style:{marginBottom:14}},h(TA,{label:"Açıklama (isteğe bağlı)",value:body,onChange:e=>setBody(e.target.value),placeholder:"Saat 09:00-17:00 arası su kesintisi yaşanacaktır.",rows:3})),
+      h("div",{style:{display:"flex",gap:8,flexWrap:"wrap"}},
+        h(Btn,{onClick:add},"+ Ekle"),
+        residents.length>0&&h(Btn,{variant:"blue",onClick:()=>{const a=add();if(a)setTimeout(()=>sendAnn(a),100);}},`📤 Ekle & Gönder (${residents.length} kişi)`)
+      )
+    ),
+    h("div",{style:{fontSize:11,fontWeight:700,color:MT,textTransform:"uppercase",letterSpacing:1,marginBottom:10}},`Duyurular (${announcements.length})`),
+    announcements.length===0?h(EmptyState,{icon:"📢",text:"Henüz duyuru eklenmedi"}):
+    [...announcements].reverse().map(a=>h("div",{key:a.id,style:{background:SF,border:`1px solid ${BD}`,borderRadius:12,padding:14,marginBottom:10}},
+      h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:a.body?6:0}},
+        h("div",{style:{fontWeight:700,fontSize:14,flex:1}},a.title),
+        h("button",{onClick:()=>remove(a.id),style:{background:"none",border:"none",color:RD,cursor:"pointer",fontSize:18,lineHeight:1,marginLeft:8}},"×")
+      ),
+      a.body&&h("div",{style:{fontSize:13,color:MT,marginBottom:8,lineHeight:1.5}},a.body),
+      h("div",{style:{display:"flex",justifyContent:"space-between",alignItems:"center",marginTop:8}},
+        h("span",{style:{fontSize:11,color:MT}},a.date),
+        residents.length>0&&h("button",{onClick:()=>sendAnn(a),style:{background:"#f0fdf4",border:"1px solid #bbf7d0",borderRadius:8,padding:"6px 12px",fontSize:12,fontWeight:700,color:"#16a34a",cursor:"pointer",fontFamily:"inherit"}},"📤 WhatsApp'tan Gönder")
+      )
+    ))
+  );
+}
+
+ReactDOM.render(h(App,null), document.getElementById("root"));
+</script>
+</body>
+</html>
